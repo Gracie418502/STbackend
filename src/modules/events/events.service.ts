@@ -94,15 +94,39 @@ export class EventsService implements OnModuleInit {
     }
 
     // Cold start — no usable checkpoint yet.
-    this.lastProcessedLedger =
-      latestLedger !== null ? Math.max(1, latestLedger - COLD_START_LOOKBACK) : 1;
-    this.resumedFromCheckpoint = false;
-    this.logger.log(`Event poller initialised at ledger ${this.lastProcessedLedger}`);
-    await this.persistCheckpoint();
+    if (latestLedger !== null) {
+      this.lastProcessedLedger = Math.max(1, latestLedger - COLD_START_LOOKBACK);
+      this.resumedFromCheckpoint = false;
+      this.logger.log(`Event poller initialised at ledger ${this.lastProcessedLedger}`);
+      await this.persistCheckpoint();
+    } else {
+      // Chain tip unknown — leave lastProcessedLedger at 0 so pollEvents
+      // resolves it lazily on the first tick rather than writing ledger 1.
+      this.resumedFromCheckpoint = false;
+      this.logger.warn(
+        'Event poller deferred: chain tip unknown at boot, will retry on first poll',
+      );
+    }
   }
 
   @Cron(CronExpression.EVERY_5_SECONDS)
   async pollEvents() {
+    // Lazy tip resolution: if onModuleInit could not fetch the chain tip we
+    // retry here before the first fetch so we start near the tip, not ledger 1.
+    if (this.lastProcessedLedger === 0) {
+      try {
+        const latestLedger = await this.stellar.getLatestLedger();
+        this.lastProcessedLedger = Math.max(1, latestLedger - COLD_START_LOOKBACK);
+        this.logger.log(
+          `Resolved chain tip on first poll; starting at ledger ${this.lastProcessedLedger}`,
+        );
+        await this.persistCheckpoint();
+      } catch {
+        this.logger.warn('Chain tip still unreachable; skipping this poll tick');
+        return;
+      }
+    }
+
     let fetchSucceeded = false;
     try {
       const events = await this.stellar.fetchContractEvents(this.lastProcessedLedger);

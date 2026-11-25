@@ -206,4 +206,52 @@ describe('EventsService — ledger checkpoint (Issue #80)', () => {
       expect(status.key).toBe(EVENT_POLLER_CHECKPOINT_KEY);
     });
   });
+
+  describe('onModuleInit — failed chain-tip fetch (Issue #16)', () => {
+    it('does not call persistCheckpoint when getLatestLedger rejects', async () => {
+      mockPrisma.eventPollerCheckpoint.findUnique.mockResolvedValue(null);
+      mockStellar.getLatestLedger.mockRejectedValue(new Error('RPC unreachable'));
+
+      await service.onModuleInit();
+
+      expect(mockPrisma.eventPollerCheckpoint.upsert).not.toHaveBeenCalled();
+    });
+
+    it('reports resumedFromCheckpoint as false after a failed-tip cold start', async () => {
+      mockPrisma.eventPollerCheckpoint.findUnique.mockResolvedValue(null);
+      mockStellar.getLatestLedger.mockRejectedValue(new Error('RPC unreachable'));
+
+      await service.onModuleInit();
+
+      const status = await service.getCheckpointStatus();
+      expect(status.resumedFromCheckpoint).toBe(false);
+    });
+
+    it('pollEvents resolves the tip on the first tick and then persists a checkpoint', async () => {
+      mockPrisma.eventPollerCheckpoint.findUnique.mockResolvedValue(null);
+      mockStellar.getLatestLedger
+        .mockRejectedValueOnce(new Error('RPC unreachable')) // fails during onModuleInit
+        .mockResolvedValueOnce(500);                         // succeeds during first pollEvents
+
+      await service.onModuleInit();
+      // After failed init, lastProcessedLedger is still 0 → no checkpoint written.
+      expect(mockPrisma.eventPollerCheckpoint.upsert).not.toHaveBeenCalled();
+
+      jest.clearAllMocks();
+      mockPrisma.eventPollerCheckpoint.upsert.mockResolvedValue({});
+      mockPrisma.eventPollerCheckpoint.updateMany.mockResolvedValue({ count: 1 });
+      mockStellar.fetchContractEvents.mockResolvedValue([]);
+
+      await service.pollEvents();
+
+      // Should have written checkpoint at 500 - COLD_START_LOOKBACK = 490.
+      expect(mockPrisma.eventPollerCheckpoint.upsert).toHaveBeenCalledWith(
+        expect.objectContaining({
+          update: expect.objectContaining({ lastProcessedLedger: 490 }),
+        }),
+      );
+      const status = await service.getCheckpointStatus();
+      expect(status.lastProcessedLedger).toBe(490);
+    });
+  });
 });
