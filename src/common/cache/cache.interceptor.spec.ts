@@ -1,35 +1,17 @@
-import { ExecutionContext, CallHandler } from '@nestjs/common';
-import { Reflector } from '@nestjs/core';
-import { of, lastValueFrom } from 'rxjs';
-import { HttpCacheInterceptor } from './cache.interceptor';
-import { CacheService } from './cache.service';
-import {
-  CACHE_NAMESPACE_KEY,
-  CACHE_TTL_KEY,
-  CACHE_PUBLIC_KEY,
-  CACHE_INVALIDATE_KEY,
-} from './cache.decorator';
+  } as unknown as ExecutionContext;
+  const cache = {
+    buildKey: jest.fn().mockReturnValue(key),
+    get: jest.fn(),
+    set: jest.fn(),
+  } as unknown as CacheService;
+  const reflector = {
+    getAllAndOverride: jest.fn(),
+  } as unknown as Reflector;
+  let interceptor: HttpCacheInterceptor;
 
-// ── helpers ────────────────────────────────────────────────────────────────
-
-function makeContext({
-  method = 'GET',
-  user,
-  params = {},
-  query = {},
-  metadata = {} as Record<string, unknown>,
-}: {
-  method?: string;
-  user?: { id: string };
-  params?: Record<string, string>;
-  query?: Record<string, string>;
-  metadata?: Record<string, unknown>;
-}): [ExecutionContext, Record<string, string>] {
-  const headers: Record<string, string> = {};
-  const request = { method, user, params, query };
-  const response = { setHeader: (k: string, v: string) => { headers[k] = v; } };
-
-  const ctx = {
+  beforeEach(() => {
+    jest.clearAllMocks();
+    interceptor = new HttpCacheInterc
     switchToHttp: () => ({
       getRequest: () => request,
       getResponse: () => response,

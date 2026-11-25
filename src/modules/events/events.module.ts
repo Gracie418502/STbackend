@@ -4,8 +4,6 @@ import { EventsService } from './events.service';
 import { EventsController } from './events.controller';
 import { PollerHealthIndicator } from './poller-health.indicator';
 import { NotificationsModule } from '../notifications/notifications.module';
-import { EnrollmentsModule } from '../enrollments/enrollments.module';
-import { CoursesModule } from '../courses/courses.module';
 
 @Module({
   imports: [NotificationsModule, EnrollmentsModule, CoursesModule],
