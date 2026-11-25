@@ -48,6 +48,7 @@ export interface CheckpointStatus {
 export class EventsService implements OnModuleInit {
   private readonly logger = new Logger(EventsService.name);
   private lastProcessedLedger = 0;
+  private isPolling = false;
 
   // Checkpoint bookkeeping (in-memory mirror of the DB row).
   private resumedFromCheckpoint = false;
@@ -109,6 +110,13 @@ export class EventsService implements OnModuleInit {
 
   @Cron(CronExpression.EVERY_5_SECONDS)
   async pollEvents() {
+    if (this.isPolling) {
+      this.logger.warn('Skipping event poll because a previous poll is still running');
+      return;
+    }
+
+    this.isPolling = true;
+
     // Lazy tip resolution: if onModuleInit could not fetch the chain tip we
     // retry here before the first fetch so we start near the tip, not ledger 1.
     if (this.lastProcessedLedger === 0) {
@@ -121,6 +129,7 @@ export class EventsService implements OnModuleInit {
         await this.persistCheckpoint();
       } catch {
         this.logger.warn('Chain tip still unreachable; skipping this poll tick');
+        this.isPolling = false;
         return;
       }
     }
@@ -150,7 +159,14 @@ export class EventsService implements OnModuleInit {
     // missed during the outage would be skipped on the next poll. A successful
     // poll that found zero events still persists (to record lastPolledAt).
     if (fetchSucceeded) {
-      await this.persistCheckpoint();
+      try {
+        await this.persistCheckpoint();
+      } catch (error) {
+        const message = error instanceof Error ? error.message : String(error);
+        this.logger.error('Checkpoint persistence failed', message);
+      }
+    }
+    this.isPolling = false;
     }
   }
 
