@@ -1,27 +1,65 @@
 import { BadRequestException, ConflictException } from '@nestjs/common';
+import { Test, TestingModule } from '@nestjs/testing';
 import { AuditLogService } from '../audit-log/audit-log.service';
 import { PrismaService } from '../../common/prisma/prisma.service';
 import { TagsService } from './tags.service';
 
 describe('TagsService', () => {
-  const prisma = {
-    tag: {
-      findUnique: jest.fn(),
-      create: jest.fn(),
-      update: jest.fn(),
-    },
-  };
-  const auditLog = {
-    createEntry: jest.fn().mockResolvedValue(undefined),
-  };
   let service: TagsService;
+  let prisma: {
+    tag: {
+      findUnique: jest.Mock;
+      findMany: jest.Mock;
+      create: jest.Mock;
+      update: jest.Mock;
+      count: jest.Mock;
+    };
+    $transaction: jest.Mock;
+  };
+  let auditLog: { createEntry: jest.Mock };
 
-  beforeEach(() => {
-    jest.clearAllMocks();
-    service = new TagsService(
-      prisma as unknown as PrismaService,
-      auditLog as unknown as AuditLogService,
-    );
+  beforeEach(async () => {
+    prisma = {
+      tag: {
+        findUnique: jest.fn(),
+        findMany: jest.fn().mockResolvedValue([]),
+        create: jest.fn(),
+        update: jest.fn(),
+        count: jest.fn().mockResolvedValue(0),
+      },
+      $transaction: jest.fn().mockResolvedValue([[], 0]),
+    };
+    auditLog = {
+      createEntry: jest.fn().mockResolvedValue(undefined),
+    };
+
+    const module: TestingModule = await Test.createTestingModule({
+      providers: [
+        TagsService,
+        { provide: PrismaService, useValue: prisma },
+        { provide: AuditLogService, useValue: auditLog },
+      ],
+    }).compile();
+
+    service = module.get<TagsService>(TagsService);
+  });
+
+  describe('findAll', () => {
+    it('clamps page=0 to a skip of 0', async () => {
+      await service.findAll({ page: 0, limit: 20 });
+
+      expect(prisma.tag.findMany).toHaveBeenCalledWith(
+        expect.objectContaining({ skip: 0, take: 20 }),
+      );
+    });
+
+    it('clamps limit=1000 to a take of 100', async () => {
+      await service.findAll({ page: 1, limit: 1000 });
+
+      expect(prisma.tag.findMany).toHaveBeenCalledWith(
+        expect.objectContaining({ skip: 0, take: 100 }),
+      );
+    });
   });
 
   it('creates a tag with a normalized slug for Web Design', async () => {
