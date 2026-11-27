@@ -5,6 +5,44 @@ import {
   TrackAnalyticsEventDto,
 } from './dto/track-analytics-event.dto';
 
+const MAX_RANGE_DAYS = 90;
+const MAX_BATCH_SIZE = 100;
+const MAX_PROPERTIES_BYTES = 16_384;
+
+const KNOWN_EVENT_TYPES = new Set([
+  'page_view',
+  'click',
+  'course_enrolled',
+  'lesson_completed',
+  'search',
+  'login',
+  'signup',
+]);
+
+export interface TrackEventInput {
+  eventType: string;
+  path?: string;
+  properties?: Record<string, unknown>;
+}
+
+export interface TrackEventContext {
+  userId?: string;
+  ipAddress?: string;
+  userAgent?: string;
+}
+
+export interface TrackEventsBatchInput {
+  events: TrackEventInput[];
+}
+
+export interface QueryRawEventsInput {
+  eventType?: string;
+  from?: string;
+  to?: string;
+  page?: number;
+  limit?: number;
+}
+
 const MAX_PROPERTIES_BYTES = 16_384;
 
 export interface TrackEventContext {
@@ -34,11 +72,12 @@ export class AnalyticsService {
 
     return this.prisma.analyticsEvent.create({
       data: {
-        eventType: dto.eventType,
+        eventType: dto.eventType.trim(),
         path: dto.path ?? null,
-        properties: dto.properties ?? undefined,
+        properties: (dto.properties ?? {}) as any,
         userId: context.userId ?? null,
         ipAddress: context.ipAddress ?? null,
+        userAgent: context.userAgent ?? null,
       },
     });
   }
@@ -57,6 +96,12 @@ export class AnalyticsService {
   }): Promise<TrackEventsBatchResult> {
     if (!dto.events || dto.events.length === 0) {
       throw new BadRequestException('events array must not be empty');
+    }
+
+    if (dto.events.length > MAX_BATCH_SIZE) {
+      throw new BadRequestException(
+        `Batch size exceeds maximum of ${MAX_BATCH_SIZE}`,
+      );
     }
 
     const valid: TrackAnalyticsEventDto[] = [];
@@ -81,9 +126,9 @@ export class AnalyticsService {
     if (valid.length > 0) {
       const result = await this.prisma.analyticsEvent.createMany({
         data: valid.map((event) => ({
-          eventType: event.eventType,
+          eventType: event.eventType.trim(),
           path: event.path ?? null,
-          properties: event.properties ?? undefined,
+          properties: (event.properties ?? {}) as any,
         })),
       });
       ingested = result.count;
@@ -134,7 +179,11 @@ export class AnalyticsService {
   }
 
   async getVolumeByEventType(from: string, to: string) {
-    const rows = await this.prisma.analyticsEvent.groupBy({
+    const where: any = {
+      occurredAt: this.boundedRange(from, to),
+    };
+
+    const grouped = await this.prisma.analyticsEvent.groupBy({
       by: ['eventType'],
       where: {
         createdAt: {
@@ -145,36 +194,25 @@ export class AnalyticsService {
       _count: { _all: true },
     });
 
-    const byEventType = rows.map((row) => ({
+    const byEventType = rows.map((row: any) => ({
       eventType: row.eventType,
-      count: row._count._all,
+      count: row._count?._all ?? 0,
     }));
+    const total = byEventType.reduce((sum, row) => sum + row.count, 0);
 
-    return {
-      total: byEventType.reduce((sum, row) => sum + row.count, 0),
-      byEventType,
-    };
+    return { total, byEventType };
   }
 
-  async queryRawEvents(query: {
-    eventType?: string;
-    from?: string;
-    to?: string;
-    page?: number;
-    limit?: number;
-  }) {
-    const page = query.page && query.page > 0 ? query.page : 1;
-    const limit = query.limit && query.limit > 0 ? query.limit : 10;
+  async queryRawEvents(input: QueryRawEventsInput) {
+    const page = Math.max(1, input.page ?? 1);
+    const limit = Math.min(100, Math.max(1, input.limit ?? 20));
 
-    const where: Record<string, unknown> = {};
-    if (query.eventType) {
-      where.eventType = query.eventType;
+    const where: any = {
+      occurredAt: this.boundedRange(input.from, input.to),
+    };
+    if (input.eventType) {
+      where.eventType = input.eventType;
     }
-    if (query.from || query.to) {
-      where.createdAt = {
-        ...(query.from ? { gte: new Date(query.from) } : {}),
-        ...(query.to ? { lte: new Date(query.to) } : {}),
-      };
     }
 
     const [data, total] = await Promise.all([
@@ -197,4 +235,7 @@ export class AnalyticsService {
       },
     };
   }
+        orderBy: { occurredAt: 'desc' },
+        skip: (page - 1) * limit,
+        take: limit,
 }

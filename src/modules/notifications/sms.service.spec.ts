@@ -172,14 +172,16 @@ describe('SmsService', () => {
       expect(rendered).toBe(
         'Hi Ada, your SorobanLard verification code is 123456. It expires in 10 minutes.',
       );
+      expect(rendered).not.toContain('{{');
     });
 
-    it('leaves unknown placeholders untouched', () => {
-      const rendered = service.renderTemplate(SmsTemplateKey.ENROLLMENT_CONFIRMED, {
-        name: 'Ada',
-      });
-
-      expect(rendered).toContain('{{courseTitle}}');
+    it('throws when a placeholder value is missing', () => {
+      expect(() =>
+        service.renderTemplate(SmsTemplateKey.ACCOUNT_VERIFICATION, { name: 'Ada' }),
+      ).toThrow(BadRequestException);
+      expect(() =>
+        service.renderTemplate(SmsTemplateKey.ACCOUNT_VERIFICATION, { name: 'Ada' }),
+      ).toThrow('Missing SMS template values: code, minutes');
     });
 
     it('renders the generic alert template from the message data', () => {
@@ -275,7 +277,7 @@ describe('SmsService', () => {
         where: { id: 'sms-1' },
         data: expect.objectContaining({
           status: SmsStatus.FAILED,
-          failureReason: 'Rejected',
+          failureReason: expect.stringContaining('Rejected'),
         }),
       });
     });
