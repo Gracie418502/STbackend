@@ -7,6 +7,7 @@ describe('QueueService', () => {
     name: 'notification-email',
     add: jest.fn(),
     getJob: jest.fn(),
+    getJobCounts: jest.fn(),
   };
   let service: QueueService;
 
@@ -60,6 +61,76 @@ describe('QueueService', () => {
   describe('requeueDeadLetterJobByName', () => {
     it('throws NotFoundException for an unregistered queue', async () => {
       await expect(service.requeueDeadLetterJobByName('unknown-queue', 'job-1')).rejects.toThrow(NotFoundException);
+    });
+  });
+
+  describe('getQueueMetrics', () => {
+    it('reports zero totals and a zero failure rate for an empty queue', async () => {
+      queue.getJobCounts.mockResolvedValue({
+        active: 0,
+        waiting: 0,
+        delayed: 0,
+        completed: 0,
+        failed: 0,
+        paused: 0,
+      });
+
+      await expect(service.getQueueMetrics()).resolves.toEqual({
+        active: 0,
+        waiting: 0,
+        delayed: 0,
+        completed: 0,
+        failed: 0,
+        paused: 0,
+        total: 0,
+        failureRate: 0,
+      });
+    });
+
+    it('sums all counted states into total and derives failureRate from finished jobs', async () => {
+      queue.getJobCounts.mockResolvedValue({
+        active: 2,
+        waiting: 3,
+        delayed: 4,
+        completed: 6,
+        failed: 2,
+        paused: 1,
+      });
+
+      await expect(service.getQueueMetrics()).resolves.toEqual({
+        active: 2,
+        waiting: 3,
+        delayed: 4,
+        completed: 6,
+        failed: 2,
+        paused: 1,
+        total: 18,
+        failureRate: 0.25,
+      });
+    });
+
+    it('returns a failure rate of 1 when only failed jobs exist', async () => {
+      queue.getJobCounts.mockResolvedValue({
+        active: 0,
+        waiting: 0,
+        delayed: 0,
+        completed: 0,
+        failed: 5,
+        paused: 0,
+      });
+
+      await expect(service.getQueueMetrics()).resolves.toEqual({
+        active: 0,
+        waiting: 0,
+        delayed: 0,
+        completed: 0,
+        failed: 5,
+        paused: 0,
+        total: 5,
+        failureRate: 1,
+      });
+    });
+  });
     });
   });
 });
