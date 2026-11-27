@@ -3,6 +3,7 @@ import { UnauthorizedException, ServiceUnavailableException } from '@nestjs/comm
 import { ConfigService } from '@nestjs/config';
 import { OtpService, TooManyRequestsException } from './otp.service';
 import { PrismaService } from '../../common/prisma/prisma.service';
+import { CacheService } from '../../common/cache/cache.service';
 import { SmsService } from '../../common/sms/sms.service';
 
 describe('OtpService', () => {
@@ -30,8 +31,16 @@ describe('OtpService', () => {
     }),
   };
 
+  const mockCacheService = {
+    get: jest.fn(),
+    set: jest.fn(),
+    del: jest.fn(),
+    increment: jest.fn(),
+  };
+
   const mockSmsService = {
     sendSms: jest.fn(),
+  };
   };
 
   beforeEach(async () => {
@@ -40,7 +49,16 @@ describe('OtpService', () => {
         OtpService,
         { provide: PrismaService, useValue: mockPrismaService },
         { provide: ConfigService, useValue: mockConfigService },
-        { provide: SmsService, useValue: mockSmsService },
+  const mockCacheService = {
+    get: jest.fn(),
+    set: jest.fn(),
+    del: jest.fn(),
+    increment: jest.fn(),
+  };
+
+  const mockSmsService = {
+    sendSms: jest.fn(),
+  };
       ],
     }).compile();
 
@@ -54,6 +72,7 @@ describe('OtpService', () => {
 
   describe('sendOtp', () => {
     it('should invalidate existing OTPs and create a new one', async () => {
+      mockCacheService.increment.mockResolvedValue(1);
       mockPrismaService.phoneOtp.updateMany.mockResolvedValue({ count: 1 });
       mockPrismaService.phoneOtp.create.mockResolvedValue({
         id: 'otp-123',
@@ -93,7 +112,35 @@ describe('OtpService', () => {
       });
     });
 
-    it('should enforce rate limiting', async () => {
+    it('should write the rate limit counter with a 60 second TTL', async () => {
+      mockCacheService.increment.mockResolvedValue(1);
+      mockPrismaService.phoneOtp.updateMany.mockResolvedValue({ count: 0 });
+      mockPrismaService.phoneOtp.create.mockResolvedValue({} as any);
+
+      await service.sendOtp('user-123', '+254712345678', 'KE');
+
+      expect(mockCacheService.increment).toHaveBeenCalledWith(
+        expect.stringContaining('+254712345678'),
+        60,
+      );
+    });
+
+    it('should throw TooManyRequestsException when cache reports a count of 3', async () => {
+      mockCacheService.increment.mockResolvedValue(3);
+      mockPrismaService.phoneOtp.updateMany.mockResolvedValue({ count: 0 });
+      mockPrismaService.phoneOtp.create.mockResolvedValue({} as any);
+
+      await expect(
+        service.sendOtp('user-123', '+254712345678', 'KE'),
+      ).rejects.toThrow(TooManyRequestsException);
+    });
+
+    it('should enforce rate limiting across calls', async () => {
+      mockCacheService.increment
+        .mockResolvedValueOnce(1)
+        .mockResolvedValueOnce(2)
+        .mockResolvedValueOnce(3)
+        .mockResolvedValueOnce(4);
       mockPrismaService.phoneOtp.updateMany.mockResolvedValue({ count: 0 });
       mockPrismaService.phoneOtp.create.mockResolvedValue({} as any);
       mockSmsService.sendSms.mockResolvedValue(undefined);

@@ -3,14 +3,30 @@ import { ConfigService } from '@nestjs/config';
 import { Networks, SorobanRpc } from '@stellar/stellar-sdk';
 import { StellarService } from './stellar.service';
 
+const mockServer = {
+  getAccount: jest.fn(),
+  simulateTransaction: jest.fn(),
+  sendTransaction: jest.fn(),
+  getTransaction: jest.fn(),
+};
+
+const mockContract = {
+  call: jest.fn(),
+};
+
 jest.mock('@stellar/stellar-sdk', () => {
   const actual = jest.requireActual('@stellar/stellar-sdk');
   return {
     ...actual,
+    rpc: {
+      ...(actual.rpc ?? {}),
+      Server: jest.fn().mockImplementation(() => mockServer),
+    },
     SorobanRpc: {
       ...actual.SorobanRpc,
-      Server: jest.fn(),
+      Server: jest.fn().mockImplementation(() => mockServer),
     },
+    Contract: jest.fn().mockImplementation(() => mockContract),
   };
 });
 
