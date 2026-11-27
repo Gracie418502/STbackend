@@ -1,6 +1,7 @@
 import { Body, Controller, Get, HttpCode, HttpStatus, Param, Post, UseGuards } from '@nestjs/common';
-import { ApiTags, ApiOperation, ApiBearerAuth } from '@nestjs/swagger';
+import { ApiTags, ApiOperation, ApiBearerAuth, ApiBody } from '@nestjs/swagger';
 import { SmsService } from './sms.service';
+import { SendSmsDto } from './dto/send-sms.dto';
 import { JwtAuthGuard } from '../../common/guards/jwt-auth.guard';
 import { RolesGuard, Roles } from '../../common/guards/roles.guard';
 import { SmsCallbackSignatureGuard } from '../../common/guards/sms-callback-signature.guard';
@@ -16,15 +17,16 @@ export class SmsController {
   @Roles(UserRole.ADMIN)
   @ApiBearerAuth()
   @ApiOperation({ summary: 'Send an SMS message for a critical account or enrollment alert' })
-  sendSms(
-    @Body('phoneNumber') phoneNumber: string,
-    @Body('countryCode') countryCode: string,
-    @Body('userId') userId?: string,
-    @Body('templateKey') templateKey?: SmsTemplateKey,
-    @Body('templateData') templateData?: Record<string, string | number>,
-    @Body('message') message?: string,
-  ) {
-    return this.smsService.sendSms({ phoneNumber, countryCode, userId, templateKey, templateData, message });
+  @ApiBody({ type: SendSmsDto })
+  sendSms(@Body() dto: SendSmsDto) {
+    return this.smsService.sendSms({
+      phoneNumber: dto.phoneNumber,
+      countryCode: dto.countryCode,
+      userId: dto.userId,
+      templateKey: dto.templateKey,
+      templateData: dto.templateData,
+      message: dto.message,
+    });
   }
 
   @Get(':id/status')
