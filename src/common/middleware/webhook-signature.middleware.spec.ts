@@ -1,92 +1,102 @@
 import {
-  ExecutionContext,
-  ForbiddenException,
-  Logger,
-  UnauthorizedException,
-} from "@nestjs/common";
-import { ConfigService } from "@nestjs/config";
-import { Reflector } from "@nestjs/core";
-import { createHmac } from "crypto";
-import { NextFunction, Request, Response } from "express";
-import { SkipWebhookSignature } from "../decorators/skip-webhook-signature.decorator";
-import { WebhookSkipGuard } from "../guards/webhook-skip.guard";
-import { WebhookSignatureMiddleware } from "./webhook-signature.middleware";
+  it('accepts a Stripe v1 signature', () => {
+    const { middleware, next } = createMiddleware({
+      WEBHOOK_SECRET: defaultSecret,
+    });
+    const headers = {
+      'stripe-signature': `t=12345,v1=${signature(defaultSecret)}`,
+    };
 
-const originalWebhookEnv = Object.fromEntries(
-  Object.entries(process.env).filter(
-    ([key]) => key === "WEBHOOK_SECRET" || key.startsWith("WEBHOOK_SECRET_"),
-  ),
-);
-
-function clearWebhookEnv() {
-  for (const key of Object.keys(process.env)) {
-    if (key === "WEBHOOK_SECRET" || key.startsWith("WEBHOOK_SECRET_")) {
-      delete process.env[key];
-    }
-  }
-}
-
-function createConfig(secrets: Record<string, string | undefined> = {}) {
-  return {
-    get: jest.fn((key: string) => secrets[key]),
-  } as unknown as ConfigService;
-}
-
-function signedRequest(url: string, secret: string) {
-  const rawBody = Buffer.from("webhook payload");
-  return {
-    originalUrl: url,
-    method: "POST",
-    headers: {
-      "x-webhook-signature": createHmac("sha256", secret)
-        .update(rawBody)
-        .digest("hex"),
-    },
-    rawBody,
-  } as unknown as Request & { rawBody: Buffer };
-}
-
-describe("WebhookSignatureMiddleware", () => {
-  const secret = "test-webhook-secret";
-  const rawBody = Buffer.from('{"event":"test"}');
-  let middleware: WebhookSignatureMiddleware;
-  const reflector = new Reflector();
-
-  const createRequest = (signature?: string) =>
-    ({
-      headers: signature ? { "x-webhook-signature": signature } : {},
-      method: "POST",
-      originalUrl: "/api/v1/webhooks/provider",
-      rawBody,
-    }) as Request & { rawBody: Buffer };
-
-  const sign = (body: Buffer) =>
-    createHmac("sha256", secret).update(body).digest("hex");
-
-  beforeEach(() => {
-    clearWebhookEnv();
-    const config = {
-      get: jest.fn((key: string) =>
-        key === "WEBHOOK_SECRET" ? secret : undefined,
-      ),
-    } as unknown as ConfigService;
-    middleware = new WebhookSignatureMiddleware(config, reflector);
-  });
-
-  afterEach(() => {
-    clearWebhookEnv();
-    Object.assign(process.env, originalWebhookEnv);
-    jest.restoreAllMocks();
-  });
-
-  it("accepts a valid HMAC-SHA256 signature and calls next", () => {
-    const req = createRequest(sign(rawBody));
-    const next = jest.fn() as NextFunction;
-
-    middleware.use(req, {} as Response, next);
+    middleware.use(createRequest(headers, rawBody), {} as Response, next);
 
     expect(next).toHaveBeenCalledTimes(1);
   });
+
+  it('prefers the provider-specific secret over the default', () => 
+
+    expect(next).toHaveBeenCalledTimes(1);
+  });
+
+  it('accepts a Stripe v1 signature', () => {
+    const { middleware, next } = createMiddleware({
+      WEBHOOK_SECRET: defaultSecret,
+    });
+    const headers = {
+      'stripe-signature': `t=12345,v1=${signature(defaultSecret)}`,
+    };
+
+    middleware.use(createRequest(headers, rawBody), {} as Response, next);
+
+    expect(next).toHaveBeenCalledTimes(1);
+  });
+
+  it('prefers the provider-specific secret over the default', () => {
+    const providerSecret = 'stripe-secret';
+    const { middleware, next } = createMiddleware({
+      WEBHOOK_SECRET: defaultSecret,
+      WEBHOOK_SECRET_STRIPE: providerSecret,
+    });
+    const headers = {
+      'x-webhook-signature': `sha256=${signature(providerSecret)}`,
+    };
+
+    middleware.use(
+      createRequest(headers, rawBody, '/api/v1/webhooks/stripe/events'),
+      {} as Response,
+      next,
+    );
+
+    expect(next).toHaveBeenCalledTimes(1);
+  });
+
+  it('rejects requests when the raw body is unavailable', () => {
+    const { middleware, next } = createMiddleware({
+      WEBHOOK_SECRET: defaultSecret,
+    });
+    const headers = {
+      'x-webhook-signature': `sha256=${signature(defaultSecret)}`,
+    };
+
+    expect(() =>
+      middleware.use(createRequest(headers, undefined), {} as Response, next),
+    ).toThrow(InternalServerErrorException);
+    expect(next).not.toHaveBeenCalled();
+  });
+
+  it('accepts an empty raw body when its signature is valid', () => {
+    const { middleware, next } = createMiddleware({
+      WEBHOOK_SECRET: defaultSecret,
+    });
+    const emptyBody = Buffer.alloc(0);
+    const headers = {
+      'x-webhook-signature': `sha256=${signature(defaultSecret, emptyBody)}`,
+    };
+
+    middleware.use(createRequest(headers, emptyBody), {} as Response, next);
+
+    expect(next).toHaveBeenCalledTimes(1);
+  });
+
+  it.each(['a'.repeat(63), 'z'.repeat(64)])(
+    'rejects malformed hex signatures without calling next',
+    (hex) => {
+      const { middleware, next } = createMiddleware({
+        WEBHOOK_SECRET: defaultSecret,
+      });
+
+      expect(() =>
+        middleware.use(
+          createRequest(
+            { 'x-webhook-signature': `sha256=${hex}` },
+            rawBody,
+          ),
+          {} as Response,
+          next,
+        ),
+      ).toThrow(ForbiddenException);
+      expect(next).not.toHaveBeenCalled();
+    },
+  );
 
   it("rejects an invalid signature", () => {
     const req = createRequest("0".repeat(64));
@@ -249,5 +259,14 @@ describe("WebhookSignatureMiddleware", () => {
       }
     });
   });
+
+  it("accepts a valid HMAC-SHA256 signature and calls next", () => {
+    const req = createRequest(sign(rawBody));
+    const next = jest.fn() as NextFunction;
+
+    middleware.use(req, {} as Response, next);
+
+    expect(next).toHaveBeenCalledTimes(1);
   });
+
 });
