@@ -45,14 +45,36 @@ describe('CacheService', () => {
 
     await expect(service.get('cache:courses:1')).resolves.toEqual({ id: 'course-1' });
     expect(mockRedis.get).toHaveBeenCalledWith('cache:courses:1');
-    expect(service.getStats()).toMatchObject({ hits: 1, misses: 0 });
+    expect(service.getStats()).toMatchObject({ hits: 1, misses: 0, scope: 'instance' });
   });
 
   it('returns null for a missing key and tracks cache misses', async () => {
     mockRedis.get.mockResolvedValue(null);
 
     await expect(service.get('cache:courses:missing')).resolves.toBeNull();
-    expect(service.getStats()).toMatchObject({ hits: 0, misses: 1 });
+    expect(service.getStats()).toMatchObject({ hits: 0, misses: 1, scope: 'instance' });
+  });
+
+  it('counts a Redis read error as a miss', async () => {
+    mockRedis.get.mockRejectedValue(new Error('connection lost'));
+
+    const value = await service.get('cache:courses:error');
+
+    expect(value).toBeNull();
+    expect(service.getStats()).toMatchObject({ hits: 0, misses: 1, scope: 'instance' });
+  });
+
+  it('resetStats() zeroes both counters', async () => {
+    mockRedis.get.mockResolvedValueOnce(JSON.stringify('value'));
+    mockRedis.get.mockResolvedValueOnce(null);
+
+    await service.get('cache:courses:hit');
+    await service.get('cache:courses:miss');
+    expect(service.getStats()).toMatchObject({ hits: 1, misses: 1 });
+
+    service.resetStats();
+
+    expect(service.getStats()).toEqual({ hits: 0, misses: 0, hitRate: 0, scope: 'instance' });
   });
 
   it('serializes values and uses the configured default TTL', async () => {
