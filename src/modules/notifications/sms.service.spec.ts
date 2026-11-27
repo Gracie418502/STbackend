@@ -282,20 +282,36 @@ describe('SmsService', () => {
       });
     });
 
-    it('marks the message failed when the gateway throws', async () => {
-      mockGatewaySend.mockRejectedValueOnce(new Error('network down'));
+    it('marks the message failed and rethrows when the gateway throws', async () => {
+      const gatewayError = new Error('gateway unavailable');
+      mockGatewaySend.mockRejectedValueOnce(gatewayError);
 
-      await service.sendSms({
-        phoneNumber: '08012345678',
-        countryCode: 'NG',
-        message: 'Your enrollment is confirmed',
+      await expect(
+        service.sendSms({
+          phoneNumber: '08012345678',
+          countryCode: 'NG',
+          message: 'Your enrollment is confirmed',
+        }),
+      ).rejects.toThrow('gateway unavailable');
+
+      expect(mockPrisma.smsMessage.update).toHaveBeenCalledWith({
+        where: { id: 'sms-1' },
+        data: expect.objectContaining({
+          status: SmsStatus.FAILED,
+          failureReason: expect.any(String),
+          sentAt: null,
+        }),
       });
+    });
+  });
+});
 
       expect(mockPrisma.smsMessage.update).toHaveBeenCalledWith({
         where: { id: 'sms-1' },
         data: expect.objectContaining({
           status: SmsStatus.FAILED,
           failureReason: 'network down',
+          sentAt: null,
         }),
       });
     });

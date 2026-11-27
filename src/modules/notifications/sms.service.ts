@@ -144,11 +144,10 @@ export class SmsService {
         },
       });
     } catch (error) {
-      this.logger.error(`SMS send failed to ${normalizedPhone}`, error.message);
-      return this.prisma.smsMessage.update({
-        where: { id: smsMessage.id },
-        data: { status: SmsStatus.FAILED, failureReason: error.message },
-      });
+      const reason = error instanceof Error ? error.message : String(error);
+      this.logger.error(`SMS send failed to ${normalizedPhone}`, reason);
+      await this.markFailed(smsMessage.id, reason);
+      throw error;
     }
   }
 
@@ -180,6 +179,13 @@ export class SmsService {
     });
 
     return { acknowledged: true };
+  }
+
+  private markFailed(id: string, reason: string) {
+    return this.prisma.smsMessage.update({
+      where: { id },
+      data: { status: SmsStatus.FAILED, failureReason: reason, sentAt: null },
+    });
   }
 
   private toE164(phoneNumber: string, country: string): string {
